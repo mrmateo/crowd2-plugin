@@ -141,6 +141,8 @@ public class CrowdConfigurationService {
 
     private transient Map<String, CacheEntry<Group>> groupCache = null;
 
+    private transient Map<String, CacheEntry<Boolean>> validationCache = null;
+
     private transient Map<String, CacheEntry<Collection<GrantedAuthority>>> authoritiesForUserCache = null;
 
     /**
@@ -559,10 +561,38 @@ public class CrowdConfigurationService {
     }
 
     public void validateSSOAuthentication(String token, List<ValidationFactor> list) throws OperationFailedException, InvalidAuthenticationException, ApplicationPermissionException, InvalidTokenException {
-        if (LOG.isLoggable(Level.FINEST)) {
-            LOG.finest("CrowdClient.validateSSOAuthentication()");
+        Boolean cachedRep;
+        if (useCache) {
+            final CacheEntry<Boolean> cached;
+            synchronized (this) {
+                cached = validationCache != null ? validationCache.get(token) : null;
+            }
+            if (cached != null && cached.isValid()) {
+                cachedRep = cached.getValue();
+            } else {
+                cachedRep = null;
+            }
+        } else {
+            cachedRep = null;
         }
-        crowdClient.validateSSOAuthentication(token, list);
+        Boolean retval = true;
+        if (cachedRep != null) {
+            retval = cachedRep;
+        } else {
+            if (LOG.isLoggable(Level.FINEST)) {
+                LOG.finest("CrowdClient.validateSSOAuthentication()");
+            }
+            crowdClient.validateSSOAuthentication(token, list);
+        }
+        // Successful validation call means token is valid
+        if (useCache && cachedRep == null && retval != null) {
+            synchronized (this) {
+                if (validationCache == null) {
+                    validationCache = new CacheMap<String, Boolean>(cacheSize);
+                }
+                validationCache.put(token, new CacheEntry<Boolean>(cacheTTL, retval));
+            }
+        }
     }
 
     public User findUserFromSSOToken(String token) throws OperationFailedException, InvalidAuthenticationException, ApplicationPermissionException, InvalidTokenException {
